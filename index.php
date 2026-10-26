@@ -78,6 +78,7 @@ foreach ($config['postgresql'] as $serverKey => $dbConfig) {
     </div>
     <div class="actions">
       <span class="status"><span class="status-dot"></span>Jaga <?php echo htmlspecialchars($statusJaga); ?></span>
+      <a class="button" href="reports.php">Laporan</a>
       <a class="button" href="settings.php">Pengaturan</a>
     </div>
   </div>

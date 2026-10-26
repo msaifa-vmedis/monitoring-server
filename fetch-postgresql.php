@@ -2,6 +2,7 @@
 
 require __DIR__ . '/settings-lib.php';
 require __DIR__ . '/telegram.php';
+require __DIR__ . '/report-lib.php';
 
 $settings = loadSettings();
 $jagaServer = isOnDutySettings($settings);
@@ -75,7 +76,6 @@ $query = "
     SELECT
         pid,
         usename,
-        datname,
         state,
         wait_event_type,
         wait_event,
@@ -96,7 +96,7 @@ if (!$result) {
 }
 
 echo '<table border="1" cellpadding="10">';
-echo '<tr><th>PID</th><th>USER</th><th>DATABASE</th><th>STATE</th><th>WAIT EVENT</th><th>DURATION</th><th>QUERY</th><th>ACTION</th></tr>';
+echo '<tr><th>PID</th><th>USER</th><th>STATE</th><th>WAIT EVENT</th><th>DURATION</th><th>QUERY</th><th>ACTION</th></tr>';
 
 $notifications = [];
 $canceledCount = 0;
@@ -121,21 +121,42 @@ while ($row = pg_fetch_assoc($result)) {
         if ($wasCanceled) {
             $canceledCount++;
             $action = 'CANCELED';
-            $queryText = $row['query'] ? substr((string)$row['query'], 0, 160) : 'NULL';
+            $fullQuery = (string)$row['query'];
+            $queryText = $fullQuery !== '' ? substr($fullQuery, 0, 160) : 'NULL';
             $notifications[] = "CANCEL LONG QUERY DB {$serverLabel} (PID: {$pid}, Time: "
                 . number_format($durationSeconds, 3, '.', '') . "s): {$queryText}";
+            saveReport(array(
+                'type' => 'postgresql_query',
+                'action' => 'CANCEL QUERY',
+                'status' => 'success',
+                'server' => $serverLabel,
+                'process_id' => $pid,
+                'user' => (string)$row['usename'],
+                'duration_seconds' => $durationSeconds,
+                'query' => $fullQuery
+            ));
         } else {
             $failedCount++;
             $action = 'FAILED';
             $error = $cancelResult ? 'backend tidak ditemukan atau tidak dapat dibatalkan' : pg_last_error($conn);
             $notifications[] = "Gagal cancel query DB {$serverLabel} PID {$pid}: {$error}";
+            saveReport(array(
+                'type' => 'postgresql_query',
+                'action' => 'CANCEL QUERY',
+                'status' => 'failed',
+                'server' => $serverLabel,
+                'process_id' => $pid,
+                'user' => (string)$row['usename'],
+                'duration_seconds' => $durationSeconds,
+                'query' => (string)$row['query'],
+                'error' => $error
+            ));
         }
     }
 
     echo '<tr>';
     echo '<td>' . $pid . '</td>';
     echo '<td>' . htmlspecialchars((string)$row['usename']) . '</td>';
-    echo '<td>' . htmlspecialchars((string)$row['datname']) . '</td>';
     echo '<td>' . htmlspecialchars((string)$row['state']) . '</td>';
     echo '<td>' . htmlspecialchars($waitEvent ?: '-') . '</td>';
     echo '<td>' . htmlspecialchars((string)$row['duration']) . ' ('

@@ -2,6 +2,7 @@
 
 require __DIR__ . '/settings-lib.php';
 require __DIR__ . '/telegram.php';
+require __DIR__ . '/report-lib.php';
 
 $settings = loadSettings();
 $jagaServer = isOnDutySettings($settings);
@@ -120,8 +121,19 @@ while ($row = mysqli_fetch_assoc($result)) {
                 $sleepActions[] = "Koneksi sleep ID {$kill_id} ({$durationSeconds}s) berhasil di-kill.";
             } else {
                 $killedQueryCount++;
-                $infoText = substr((string)$row['INFO'], 0, 160);
+                $fullQuery = (string)$row['INFO'];
+                $infoText = substr($fullQuery, 0, 160);
                 $notifications[] = "KILL LONG QUERY DB {$serverLabel} (ID: {$kill_id}, Time: {$durationSeconds}s): {$infoText}";
+                saveReport(array(
+                    'type' => 'mysql_query',
+                    'action' => 'KILL QUERY',
+                    'status' => 'success',
+                    'server' => $serverLabel,
+                    'process_id' => $kill_id,
+                    'user' => (string)$row['USER'],
+                    'duration_seconds' => $durationSeconds,
+                    'query' => $fullQuery
+                ));
             }
         } else {
             $action = 'FAILED';
@@ -130,7 +142,19 @@ while ($row = mysqli_fetch_assoc($result)) {
                 $sleepActions[] = "Koneksi sleep ID {$kill_id} ({$durationSeconds}s) gagal di-kill: " . mysqli_error($conn);
             } else {
                 $failedQueryCount++;
-                $notifications[] = "Gagal kill query DB {$serverLabel} ID {$kill_id}: " . mysqli_error($conn);
+                $killError = mysqli_error($conn);
+                $notifications[] = "Gagal kill query DB {$serverLabel} ID {$kill_id}: " . $killError;
+                saveReport(array(
+                    'type' => 'mysql_query',
+                    'action' => 'KILL QUERY',
+                    'status' => 'failed',
+                    'server' => $serverLabel,
+                    'process_id' => $kill_id,
+                    'user' => (string)$row['USER'],
+                    'duration_seconds' => $durationSeconds,
+                    'query' => (string)$row['INFO'],
+                    'error' => $killError
+                ));
             }
         }
     }

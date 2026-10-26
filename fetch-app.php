@@ -2,6 +2,7 @@
 
 require __DIR__ . '/settings-lib.php';
 require __DIR__ . '/telegram.php';
+require __DIR__ . '/report-lib.php';
 
 session_start();
 $config = require __DIR__ . '/config.php';
@@ -71,6 +72,16 @@ foreach ($appMonitor['apps'] as $key => $app) {
         $restartResult = restartAppInstance($appMonitor['restart_url'], $app['instance_id']);
         $action = $restartResult !== false ? 'RESTARTED' : 'RESTART FAILED';
         callApiTelegram('AUTO RESTART ' . $key . ' - request: ' . ($currentRequests === null ? 'UNKNOWN' : $currentRequests) . ' - ' . $action);
+        saveReport(array(
+            'type' => 'app_restart',
+            'action' => 'RESTART APP',
+            'status' => $restartResult !== false ? 'success' : 'failed',
+            'server' => $key,
+            'active_requests' => $currentRequests,
+            'threshold' => (int)$app['threshold'],
+            'instance_id' => $app['instance_id'],
+            'details' => $action
+        ));
         $_SESSION['app_monitor'][$key] = 0;
     } elseif (!$jagaServer) {
         $action = 'DI LUAR JADWAL';

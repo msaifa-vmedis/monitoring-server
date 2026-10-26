@@ -1,6 +1,7 @@
 # Konfigurasi lokal berisi kredensial, key, dan pengaturan runtime
 /config.php
 /settings.json
+/reports/
 
 # File environment lokal
 .env
