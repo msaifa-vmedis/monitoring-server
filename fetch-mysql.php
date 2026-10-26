@@ -75,14 +75,14 @@ $activeSleepTimeout = ($usagePercent >= $connectionUsageThreshold || $sleepCount
     : $sleepTimeoutNormal;
 
 $query = "
-    SELECT ID, USER, COMMAND, TIME, INFO
+    SELECT ID, USER, DB, COMMAND, TIME, STATE, INFO
     FROM INFORMATION_SCHEMA.PROCESSLIST
     WHERE USER NOT IN ('rdsadmin', 'event_scheduler', 'system user')
     AND ID <> CONNECTION_ID()
     AND (
         (COMMAND = 'Sleep' AND TIME > {$activeSleepTimeout})
         OR
-        (COMMAND IN ('Query', 'Execute') AND TIME > {$queryTimeout})
+        (COMMAND IN ('Query', 'Execute') AND INFO IS NOT NULL)
     )
     ORDER BY TIME DESC
 ";
@@ -93,50 +93,77 @@ if (!$result) {
 }
 
 echo '<table border="1" cellpadding="10">';
-echo '<tr><th>ID</th><th>USER</th><th>COMMAND</th><th>TIME</th><th>INFO</th><th>ACTION</th></tr>';
+echo '<tr><th>ID</th><th>USER</th><th>STATE</th><th>DURATION</th><th>QUERY</th><th>ACTION</th></tr>';
 
-$notifications = [];
-$killedCount = 0;
-$failedCount = 0;
+$notifications = array();
+$sleepActions = array();
+$killedSleepCount = 0;
+$failedSleepCount = 0;
+$killedQueryCount = 0;
+$failedQueryCount = 0;
 
 while ($row = mysqli_fetch_assoc($result)) {
-    $action = 'SKIPPED';
-    echo '<tr>';
-    echo '<td>' . htmlspecialchars($row['ID']) . '</td>';
-    echo '<td>' . htmlspecialchars($row['USER']) . '</td>';
-    echo '<td>' . htmlspecialchars($row['COMMAND']) . '</td>';
-    echo '<td>' . htmlspecialchars($row['TIME']) . '</td>';
-    // Gunakan (string) casting agar strpos tidak error jika INFO bernilai NULL
-    echo '<td>' . htmlspecialchars(substr((string)$row['INFO'], 0, 200)) . '</td>';
+    $isSleep = $row['COMMAND'] === 'Sleep';
+    $durationSeconds = (int)$row['TIME'];
+    $shouldKillQuery = !$isSleep && $durationSeconds > $queryTimeout;
+    $action = $isSleep ? 'SLEEP TIMEOUT' : 'MONITORING';
 
-    if ($jagaServer) {
+    if ($jagaServer && ($isSleep || $shouldKillQuery)) {
         $kill_id = (int)$row['ID'];
-        $isSleep = $row['COMMAND'] === 'Sleep';
         $killProcedure = $isSleep ? 'mysql.rds_kill' : 'mysql.rds_kill_query';
         $kill_query = "CALL {$killProcedure}($kill_id);";
 
         if (mysqli_query($conn, $kill_query)) {
-            $killedCount++;
             $action = 'KILLED';
-            $tipe = $isSleep ? 'KONEKSI SLEEP' : 'LONG QUERY';
-            $infoText = $row['INFO'] ? substr((string)$row['INFO'], 0, 160) : 'NULL';
-            $notifications[] = "KILL {$tipe} DB {$serverLabel} (ID: {$kill_id}, Time: {$row['TIME']}s): {$infoText}";
+            if ($isSleep) {
+                $killedSleepCount++;
+                $sleepActions[] = "Koneksi sleep ID {$kill_id} ({$durationSeconds}s) berhasil di-kill.";
+            } else {
+                $killedQueryCount++;
+                $infoText = substr((string)$row['INFO'], 0, 160);
+                $notifications[] = "KILL LONG QUERY DB {$serverLabel} (ID: {$kill_id}, Time: {$durationSeconds}s): {$infoText}";
+            }
         } else {
-            $failedCount++;
             $action = 'FAILED';
-            $notifications[] = "Gagal kill proses DB {$serverLabel} ID {$kill_id}: " . mysqli_error($conn);
+            if ($isSleep) {
+                $failedSleepCount++;
+                $sleepActions[] = "Koneksi sleep ID {$kill_id} ({$durationSeconds}s) gagal di-kill: " . mysqli_error($conn);
+            } else {
+                $failedQueryCount++;
+                $notifications[] = "Gagal kill query DB {$serverLabel} ID {$kill_id}: " . mysqli_error($conn);
+            }
         }
     }
 
-    echo '<td>' . htmlspecialchars($action) . '</td>';
-    echo '</tr>';
+    // Koneksi sleep diproses untuk auto-kill, tetapi tidak ditampilkan pada tabel query aktif.
+    if (!$isSleep) {
+        echo '<tr>';
+        echo '<td>' . (int)$row['ID'] . '</td>';
+        echo '<td>' . htmlspecialchars((string)$row['USER']) . '</td>';
+        echo '<td>' . htmlspecialchars((string)$row['STATE']) . '</td>';
+        echo '<td>' . $durationSeconds . 's</td>';
+        echo '<td style="max-width:800px; white-space:pre-wrap; word-break:break-word;">'
+            . htmlspecialchars(substr((string)$row['INFO'], 0, 300)) . '</td>';
+        echo '<td>' . htmlspecialchars($action) . '</td>';
+        echo '</tr>';
+    }
 }
 
 echo '</table>';
 echo '<p>Threads connected: ' . (int)$threadsConnected . ' / ' . (int)$maxConnections . ' (' . round($usagePercent, 2) . '%), Sleep count: ' . (int)$sleepCount . ', Sleep timeout aktif: ' . (int)$activeSleepTimeout . 's, Query timeout: ' . (int)$queryTimeout . 's.</p>';
 
+if (!empty($sleepActions)) {
+    echo '<div style="margin-top:10px; padding:10px; border:1px solid #e2e8f0; border-radius:8px; background:#f8fafc;">';
+    echo '<strong>Auto-kill koneksi sleep — berhasil: ' . $killedSleepCount . ', gagal: ' . $failedSleepCount . '</strong>';
+    echo '<ul style="margin:8px 0 0; padding-left:20px;">';
+    foreach ($sleepActions as $sleepAction) {
+        echo '<li>' . htmlspecialchars($sleepAction) . '</li>';
+    }
+    echo '</ul></div>';
+}
+
 if ($jagaServer && !empty($notifications)) {
-    $header = "AutoKill DB {$serverLabel} - killed: {$killedCount}, failed: {$failedCount}";
+    $header = "AutoKill Query DB {$serverLabel} - killed: {$killedQueryCount}, failed: {$failedQueryCount}";
     callApiTelegram($header . "\n" . implode("\n", $notifications));
 }
 
