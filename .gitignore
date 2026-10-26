@@ -1,0 +1,11 @@
+# Konfigurasi lokal berisi kredensial dan key rahasia
+/config.php
+
+# File environment lokal
+.env
+.env.*
+!.env.example
+
+# Log dan file sementara
+*.log
+*.tmp
